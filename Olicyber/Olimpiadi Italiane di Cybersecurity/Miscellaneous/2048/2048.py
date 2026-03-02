@@ -83,4 +83,4 @@ print("\n[+] Tutte le operazioni inviate. Attendo la flag...\n")
 finale = p.recvall(timeout=2).decode(errors="ignore")
 print(finale)
 
-print("\n🎉 FLAG TROVATA! 🎉\n")
+print("\n🎉 FLAG TROVATA!! 🎉\n")
