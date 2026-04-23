@@ -1,0 +1,357 @@
+Eccoti **esattamente il contenuto che mi hai dato**, trasformato in **Markdown pulito**, senza aggiungere né togliere nulla, solo formattato in modo professionale.
+
+---
+
+# 🏆 Write‑up — Arbitrary Pointer Manipulation (AVCTF)
+
+**Flag:**  
+`AVctf{4rbitr4ry_p01nt3r_m4n1p__f1x3d}`
+
+Il nome dice già tutto: arbitrary pointer manipulation.
+
+---
+
+# 🧠 1️⃣ Analisi del programma
+
+Dal decompilato:
+
+```
+init();
+srand(time(NULL));
+
+char format_buffer[...];
+strncpy(&var_68, "Numero estratto: %d!\n", 0x55);
+int64_t* format = &var_68;
+
+loadFlag((&var_58 + 6));
+
+printf("... RBP: %p\n", &__saved_rbp);
+puts("Bingo! Inserisci il tuo nome...");
+
+scanf("%s", (&var_30 + 5));
+
+printf(format, numero);
+```
+
+---
+
+# 🔎 2️⃣ Cosa fa davvero il programma
+
+## Step 1 – Carica la flag nello stack
+
+```
+loadFlag((&var_58 + 6));
+```
+
+La flag viene letta da file e salvata nello stack frame di main.
+
+- 👉 la flag è in memoria stack  
+- 👉 non in .data  
+- 👉 non in heap  
+
+---
+
+## Step 2 – Stampa RBP
+
+RBP (stack base pointer): `0x7fff....`
+
+Questo è un leak di stack.
+
+⚠️ Importantissimo: con ASLR attivo, gli indirizzi stack cambiano ogni volta.
+
+Ma loro ti regalano l’indirizzo base dello stack frame.
+
+➡️ ASLR → bypassato.
+
+---
+
+## Step 3 – Vulnerabilità
+
+```
+scanf("%s", (&var_30 + 5));
+```
+
+`%s` non ha limite.
+
+Quindi:
+
+- 👉 buffer overflow nello stack  
+- 👉 puoi scrivere oltre il buffer  
+- 👉 puoi sovrascrivere variabili locali  
+
+---
+
+# 💣 3️⃣ Perché non era una semplice ROP
+
+All’inizio sembrava:
+
+- Overflow  
+- Controllo RIP  
+- Ret2printf  
+
+Ma era overkill.
+
+Il vero punto è questo:
+
+```
+int64_t* format = &var_68;
+...
+printf(format, numero);
+```
+
+⚠️ `format` è un puntatore sullo stack.
+
+Se lo sovrascrivi, controlli cosa `printf` usa come format string.
+
+---
+
+# 🧱 4️⃣ Stack Layout
+
+Dal disassembly:
+
+```
+sub rsp, 0x60
+```
+
+Abbiamo trovato:
+
+- input → `rbp - 0x23`  
+- format pointer → `rbp - 0x8`  
+- flag → `rbp - 0x4a`  
+
+## 📏 Calcolo distanza
+
+Input parte da:
+
+```
+rbp - 0x23
+```
+
+Vogliamo sovrascrivere:
+
+```
+rbp - 0x8
+```
+
+Differenza:
+
+```
+0x23 - 0x8 = 0x1b = 27 byte
+```
+
+Quindi:
+
+```
+payload = 27 byte padding + nuovo_valore_format
+```
+
+---
+
+# 🎯 5️⃣ Arbitrary Pointer Manipulation
+
+Non tocchiamo RIP.  
+Non tocchiamo return address.  
+Non facciamo ROP.
+
+Facciamo questo:
+
+```
+format = flag_address
+```
+
+Quindi:
+
+```
+printf(flag_address, numero);
+```
+
+Diventa:
+
+```
+printf("AVctf{...}", numero);
+```
+
+`printf` stampa la flag.
+
+Fine.
+
+---
+
+# 🔥 6️⃣ Perché serve il leak di RBP
+
+La flag è nello stack.
+
+Con ASLR:
+
+- `rbp` cambia ogni connessione
+
+Ma il programma stampa:
+
+```
+RBP: 0x7fff....
+```
+
+Quindi possiamo calcolare:
+
+```
+flag_addr = rbp - 0x4a
+```
+
+Exploit dinamico ogni volta.
+
+---
+
+# 🧬 7️⃣ Teoria Dietro la Challenge
+
+Questa challenge unisce:
+
+## 🅰️ Stack Frame Internals
+
+Su x86_64:
+
+```
+push rbp
+mov rbp, rsp
+sub rsp, X
+```
+
+Layout:
+
+- [ saved rbp ]  
+- [ return addr ]  
+- [ local variables ]  
+
+Tutte le variabili locali stanno a offset negativi da rbp.
+
+---
+
+## 🅱️ ASLR
+
+ASLR randomizza:
+
+- stack  
+- heap  
+- libc  
+
+Ma se hai un leak → lo neutralizzi.
+
+---
+
+## 🅲️ Buffer Overflow
+
+`scanf("%s")` senza limite è vulnerabile.
+
+- nessun stack canary  
+- nessun bound checking  
+
+---
+
+## 🅳️ Arbitrary Write Primitive
+
+Overflow → scrivi su:
+
+- variabili locali  
+- puntatori  
+- flag  
+- saved rbp  
+- return address  
+
+Ma l’obiettivo non è RIP.
+
+È più elegante:
+
+👉 sovrascrivere un puntatore usato dopo
+
+Questo è chiamato:
+
+**Arbitrary Pointer Manipulation**
+
+---
+
+## 🅴️ Format String Semantics
+
+```
+printf(format, numero);
+```
+
+`printf` prende il primo parametro come:
+
+- stringa letterale  
+- oppure puntatore a stringa  
+
+Se tu controlli `format` → controlli cosa viene stampato.
+
+---
+
+# 💀 8️⃣ Perché ROP non era necessario
+
+Molti solver probabilmente hanno fatto:
+
+- pop rdi  
+- printf  
+- alignment  
+
+Funziona.
+
+Ma è instabile e più complesso.
+
+La intended solution è:
+
+- non controllare il flusso di controllo  
+- controllare il flusso dei dati  
+
+Molto più pulito.
+
+---
+
+# 🧠 9️⃣ Concetti Importanti Imparati
+
+✔ Difference between Control Flow Hijack and Data Flow Hijack  
+✔ ASLR Bypass tramite Information Leak  
+✔ Stack Offsets Analysis  
+✔ Pointer Overwrite > ROP  
+
+Se puoi cambiare un puntatore usato dopo…
+
+- Non serve toccare RIP.  
+- È più stealth.  
+- È più elegante.  
+- È più stabile.  
+
+---
+
+# 🏁 10️⃣ Perché la flag si chiama così
+
+`AVctf{4rbitr4ry_p01nt3r_m4n1p__f1x3d}`
+
+Traduzione:
+
+**Arbitrary pointer manipulation fixed**
+
+La vulnerabilità è proprio quella.
+
+---
+
+# 📦 11️⃣ Riassunto Exploit
+
+1. Connetti  
+2. Leggi RBP  
+3. Calcola `flag_addr`  
+4. Padding 27 byte  
+5. Scrivi `flag_addr` in `format`  
+6. Lascia che `printf` faccia il resto  
+
+Zero ROP.  
+Zero shellcode.  
+Zero libc.
+
+---
+
+Se vuoi, posso anche:
+
+✅ generarti la versione PDF-ready  
+✅ aggiungere diagrammi ASCII dello stack  
+✅ aggiungere la parte exploit in Python (pwntools)  
+✅ fare una versione “short” per la submission CTF  
+
+Dimmi tu.
